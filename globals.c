@@ -1,9 +1,10 @@
 #include "globals.h"
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
-// Global server instance
-web_server_t g_server;
+
+/********************* HELPER - CAN DELETE *******************************/
 
 // Common MIME types for static file serving
 mime_type_t g_mime_types[] = {
@@ -44,7 +45,7 @@ void initialize_server_globals(void) {
     // Initialize request queue
     g_server.request_queue.head = NULL;
     g_server.request_queue.tail = NULL;
-    g_server.request_queue.count = 0;
+    g_server.request_queue.queue_count = 0;
     g_server.request_queue.max_size = DEFAULT_QUEUE_SIZE;
     
     // Initialize thread pool
@@ -78,15 +79,15 @@ void cleanup_server_globals(void) {
     
     // Clean up any remaining requests in queue
     pthread_mutex_lock(&g_server.request_queue.mutex);
-    client_request_t *current = g_server.request_queue.head;
+    Client_Request *current = g_server.request_queue.head;
     while (current) {
-        client_request_t *next = current->next;
+        Client_Request *next = current->next;
         free(current);
         current = next;
     }
     g_server.request_queue.head = NULL;
     g_server.request_queue.tail = NULL;
-    g_server.request_queue.count = 0;
+    g_server.request_queue.queue_count = 0;
     pthread_mutex_unlock(&g_server.request_queue.mutex);
     
     // Destroy mutexes and condition variables

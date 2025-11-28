@@ -7,6 +7,26 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <time.h>
+#include <signal.h>
+
+#include "worker.h"
+
+// Main global server instance
+struct Web_Server global_server;
+
+// Web server structure
+typedef struct Web_Server {
+    server_config_t config;                // Server configuration
+    Thread_Pool thread_pool;              // Worker thread pool
+    Shared_Queue request_queue;            // Request queue
+    server_stats_t stats;                  // Server statistics
+    
+    // Main server thread
+    pthread_t master_thread;               // Main accept() thread
+    
+    // Signal handling
+    volatile sig_atomic_t signal_received; // For signal handling
+} Web_Server;
 
 // Forward declarations
 typedef struct client_request client_request_t;
@@ -16,46 +36,41 @@ typedef struct server_stats server_stats_t;
 typedef struct server_config server_config_t;
 
 // Client request structure
-struct client_request {
+typedef struct Client_Request {
     int client_socket;                    // Socket file descriptor
     struct sockaddr_in client_addr;       // Client address info
     time_t request_time;                  // When request was received
     char request_buffer[8192];            // Raw HTTP request data
     size_t request_size;                  // Size of request data
     int worker_id;                        // Which worker is handling this
-    struct client_request *next;          // For linked list queue
-};
+    struct Client_Request *next;          // For linked list queue
+} Client_Request;
 
 // Thread-safe request queue (producer-consumer pattern)
-struct request_queue {
-    client_request_t *head;               // Queue head
-    client_request_t *tail;               // Queue tail
-    int count;                           // Current number of requests in queue
-    int max_size;                        // Maximum queue capacity
+typedef struct Shared_Queue {
+    Client_Request *head;                 // Queue head
+    Client_Request *tail;                 // Queue tail
+    int queue_count;                      // Current number of requests in queue
+    int max_size;                         // Maximum queue capacity
     
-    pthread_mutex_t mutex;               // Queue access mutex
-    pthread_cond_t not_empty;            // Signal when queue has items
-    pthread_cond_t not_full;             // Signal when queue has space
-};
+    pthread_mutex_t mutex;                // Queue access mutex
+    pthread_cond_t not_empty;             // Signal when queue has items
+    pthread_cond_t not_full;              // Signal when queue has space
+} Shared_Queue;
 
-// Individual worker thread information
-typedef struct {
-    pthread_t thread_id;                 // Thread identifier
-    int worker_id;                       // Worker number (0, 1, 2, ...)
-    int is_active;                       // Is thread currently processing
-    int requests_handled;                // Number of requests processed
-    time_t last_activity;                // Last time this worker was active
-    client_request_t *current_request;   // Currently processing request
-} worker_thread_t;
+// Thread pool structure
+typedef struct Thread_Pool {
+    Worker_Thread* workers;               // Array of worker threads
+    int pool_size;                        // Number of worker threads
+    int active_workers;                   // Currently active workers
+    int shutdown_requested;               // Flag to signal shutdown
+    pthread_mutex_t pool_mutex;           // Mutex for thread pool data
+} Thread_Pool;
 
-// Thread pool management
-struct thread_pool {
-    worker_thread_t *workers;            // Array of worker threads
-    int pool_size;                       // Number of worker threads
-    int active_workers;                  // Currently active workers
-    pthread_mutex_t pool_mutex;          // Thread pool access mutex
-    int shutdown_requested;              // Flag for graceful shutdown
-};
+
+
+
+
 
 // Server statistics (thread-safe access required)
 struct server_stats {
@@ -103,23 +118,6 @@ struct server_config {
     int log_level;                       // Logging verbosity
     pthread_mutex_t log_mutex;           // Thread-safe logging
 };
-
-// Complete web server structure
-typedef struct {
-    server_config_t config;              // Server configuration
-    thread_pool_t thread_pool;           // Worker thread pool
-    request_queue_t request_queue;       // Request queue
-    server_stats_t stats;                // Server statistics
-    
-    // Main server thread
-    pthread_t master_thread;             // Main accept() thread
-    
-    // Signal handling
-    volatile sig_atomic_t signal_received; // For signal handling
-} web_server_t;
-
-// Global server instance
-extern web_server_t g_server;
 
 // Default configuration constants
 #define DEFAULT_PORT                8080

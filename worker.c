@@ -1,42 +1,81 @@
-#ifndef WORKER_H
-#define WORKER_H
-
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+
+#include "globals.h"
+#include "worker.h"
 /* 
 * Module that contains thread management functions for worker threads.
 */
 
-#define MAX_WORKERS 10
-
-typedef struct Master_Thread {
-    pthread_t thread_id;            // master thread identifier
-    int num_workers;                // number of worker threads it's managing
-
-    Worker_Thread* worker;         // array of worker threads
-} Master_Thread;
-
-typedef struct Worker_Thread {
-    pthread_t thread_id;            // thread identifier
-    int worker_id;                  // worker identifier
-    int is_active;                  // status flag if thread is active 0 = inactive or 1 = active
-    int num_requests;               // number of requests handled
-    time_t last_active;             // timestamp of last thread activity
-    // add pointer to current client it's serving
-} Worker_Thread;
-
-
 // Worker thread function that each thread will execute
-void* worker_function(void* arg) {
+void worker_function(void* arg) {
     Worker_Thread* worker = (Worker_Thread*)arg;
 
-    while (1) {
-        // Wait for work assignments
-        // Process requests
-        // Update worker status
+    while (!clean_thread_pool) {
+
+        Client_Request* request = dequeue_request(&global_server.request_queue);
+        
+        if (request == NULL) {
+            break; // no request to process
+        }
+
+        // critical section to update worker status as active
+        pthread_mutex_lock(&global_server.thread_pool.pool_mutex);
+        worker->is_active = 1; // mark worker as active
+        worker->current_request = request; // assign current request
+        worker->last_active = time(NULL); // update last active time
+        global_server.thread_pool.active_workers++;
+        pthread_mutex_unlock(&global_server.thread_pool.pool_mutex);
+
+        request->worker_id = worker->worker_id; // assign worker ID to request
+        
+        // Process HTTP requests ***********************************************
+
+        // critical section to update worker status as inactive
+        pthread_mutex_lock(&global_server.thread_pool.pool_mutex);
+        worker->is_active = 0;
+        worker->current_request = NULL;
+        worker->num_requests++;
+        global_server.thread_pool.active_workers--;
+        pthread_mutex_unlock(&global_server.thread_pool.pool_mutex);
+
+        // Update server *******************************************************
+
+        free(request); // free the processed request
     }
-    return NULL;
+}
+
+// FUNCTION: dequeue_request() - removes a request from the shared queue
+Client_Request* dequeue_request (Shared_Queue* queue) {
+    
+    Client_Request* request = NULL; // pointer to hold dequeued request
+
+    // critical section to access shared queue
+    pthread_mutex_lock(&queue->mutex);
+
+    // while queue is empty and server is running - WAIT
+    while (queue->queue_count == 0 && !global_server.config.shutdown_requested) {
+        pthread_cond_wait(&queue->not_empty, &queue->mutex);
+    }
+
+    // FIFO - remove request from head of queue
+    request = queue->head;
+    if (request != NULL) {
+        queue->head = request->next; // move head to next request
+        
+        // if queue is empty, update tail to NULL
+        if (queue->head == NULL) {
+            queue->tail = NULL;
+        }
+
+        queue->queue_count--;
+
+        pthread_cond_signal(&queue->not_full); // signal that queue is not full
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    
+    return request;
 }
 
 // FUNCTION: thread_pool() - initializes the thread pool for worker threads
@@ -74,5 +113,3 @@ void clean_thread_pool(Master_Thread* master) {
     }
     free(master->worker); // free allocated memory
 }
-
-#endif
