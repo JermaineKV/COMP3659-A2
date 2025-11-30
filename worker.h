@@ -23,5 +23,6 @@ void worker_function(void* arg);
 Client_Request* dequeue_request (Shared_Queue* queue);
 int init_thread_pool(Master_Thread* master, int num_workers);
 void clean_thread_pool(Master_Thread* master);
+int parse_http_request(const char* request_buffer, char* filename, size_t filename_size);
 
 #endif

@@ -1,12 +1,64 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+#include <string.h>
+#include <stdlib.h>
 
 #include "globals.h"
 #include "worker.h"
 /* 
 * Module that contains thread management functions for worker threads.
 */
+
+// FUNCTION: parse_http() - parses HTTP request to extract the filename
+int parse_http(const char* request_buffer, char* filename, size_t filename_size) {
+    // Find the start of the request line
+    const char* method_start = request_buffer;
+    
+    // Skip leading whitespace
+    while (*method_start == ' ' || *method_start == '\t') {
+        method_start++;
+    }
+    
+    // Find the space after the method (GET, POST, etc.)
+    const char* path_start = strchr(method_start, ' ');
+    if (path_start == NULL) {
+        return -1; // Invalid request format
+    }
+    
+    // Skip spaces between method and path
+    path_start++;
+    while (*path_start == ' ') {
+        path_start++;
+    }
+    
+    // Find the space after the path (before HTTP version)
+    const char* path_end = strchr(path_start, ' ');
+    if (path_end == NULL) {
+        // Try to find newline instead
+        path_end = strchr(path_start, '\r');
+        if (path_end == NULL) {
+            path_end = strchr(path_start, '\n');
+        }
+        if (path_end == NULL) {
+            return -1; // Invalid request format
+        }
+    }
+    
+    // Calculate the length of the path
+    size_t path_len = path_end - path_start;
+    
+    // Check if filename buffer is large enough
+    if (path_len >= filename_size) {
+        path_len = filename_size - 1; // Truncate to fit
+    }
+    
+    // Copy the path to the filename buffer
+    strncpy(filename, path_start, path_len);
+    filename[path_len] = '\0'; // Null terminate
+    
+    return 0; // Success
+}
 
 // Worker thread function that each thread will execute
 void worker_function(void* arg) {
@@ -31,6 +83,40 @@ void worker_function(void* arg) {
         request->worker_id = worker->worker_id; // assign worker ID to request
         
         // Process HTTP requests ***********************************************
+        
+        // Read data from the socket
+        ssize_t bytes_read = read(request->client_socket, request->request_buffer, 
+                                 sizeof(request->request_buffer) - 1);
+        
+        if (bytes_read > 0) {
+            request->request_buffer[bytes_read] = '\0'; // Null terminate
+            request->request_size = bytes_read;
+            
+            // parse the HTTP request to extract the filename
+            char filename[1024];
+            if (parse_http(request->request_buffer, filename, sizeof(filename)) == 0) {
+                // successfully parsed the filename
+                // log the parsed request (can be removed in production)
+                char log_msg[2048];
+                int log_len = snprintf(log_msg, sizeof(log_msg), 
+                                      "[Worker %d] Parsed request: %s\n", 
+                                      worker->worker_id, filename);
+                write(STDOUT_FILENO, log_msg, log_len);
+                
+                // TODO: Use filename to serve the requested file **************************
+                // call file handling functions
+                
+            } else {
+                // failed to parse request
+                write(STDOUT_FILENO, "[Worker] Error: Failed to parse HTTP request\n", 47);
+            }
+        } else if (bytes_read == 0) {
+            // client closed connection
+            write(STDOUT_FILENO, "[Worker] Client closed connection\n", 36);
+        } else {
+            // read error
+            write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 45);
+        }
 
         // critical section to update worker status as inactive
         pthread_mutex_lock(&global_server.thread_pool.pool_mutex);
@@ -74,7 +160,7 @@ Client_Request* dequeue_request (Shared_Queue* queue) {
         pthread_cond_signal(&queue->not_full); // signal that queue is not full
     }
     pthread_mutex_unlock(&queue->mutex);
-    
+
     return request;
 }
 
