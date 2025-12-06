@@ -93,7 +93,7 @@ int serve_file(int client_socket, const char* filepath, int worker_id) {
     // read the file contents
     if (read_file(filepath, &file_buffer, &file_size) != 0) {
         // file not found or read error
-        dprintf(STDOUT_FILENO, "[Worker %d] File not found: %s\n", worker_id, filepath);
+        send_http_error(client_socket, 404, "Not Found", worker_id);
         return -1;
     }
     

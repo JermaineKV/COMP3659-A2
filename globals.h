@@ -141,8 +141,7 @@ typedef struct {
     char *mime_type;                     // MIME type (e.g., "text/html")
 } mime_type_t;
 
-extern mime_type_t g_mime_types[];
-extern int g_mime_types_count;
+// MIME types array is private to globals.c
 
 // ============================================================================
 // CONSTANTS
@@ -166,7 +165,6 @@ extern int g_mime_types_count;
 
 void initialize_server_globals(void);
 void cleanup_server_globals(void);
-void reset_server_stats(void);
 const char* get_mime_type(const char* filename);
 
 #endif // GLOBALS_H

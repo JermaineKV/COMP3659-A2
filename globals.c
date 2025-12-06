@@ -57,7 +57,15 @@ void initialize_server_globals(void) {
     global_server.thread_pool.shutdown_requested = 0;
     
     // Initialize statistics
-    reset_server_stats();
+    global_server.stats.total_connections = 0;
+    global_server.stats.active_connections = 0;
+    global_server.stats.max_concurrent_connections = 0;
+    global_server.stats.total_requests = 0;
+    global_server.stats.successful_requests = 0;
+    global_server.stats.not_found_requests = 0;
+    global_server.stats.error_requests = 0;
+    global_server.stats.server_start_time = time(NULL);
+    global_server.stats.last_request_time = 0;
     
     // Initialize signal handling
     global_server.signal_received = 0;
@@ -104,22 +112,7 @@ void cleanup_server_globals(void) {
     }
 }
 
-// Reset server statistics
-void reset_server_stats(void) {
-    pthread_mutex_lock(&global_server.stats.stats_mutex);
-    
-    global_server.stats.total_connections = 0;
-    global_server.stats.active_connections = 0;
-    global_server.stats.max_concurrent_connections = 0;
-    global_server.stats.total_requests = 0;
-    global_server.stats.successful_requests = 0;
-    global_server.stats.not_found_requests = 0;
-    global_server.stats.error_requests = 0;
-    global_server.stats.server_start_time = time(NULL);
-    global_server.stats.last_request_time = 0;
-    
-    pthread_mutex_unlock(&global_server.stats.stats_mutex);
-}
+// Statistics tracking is available for future use but not currently reported
 
 // Get MIME type based on file extension
 const char* get_mime_type(const char* filename) {
