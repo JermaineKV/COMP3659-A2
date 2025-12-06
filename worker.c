@@ -3,15 +3,20 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/time.h>
 
 #include "globals.h"
 #include "worker.h"
+#include "queue.h"
+#include "files.h"
+
 /* 
 * Module that contains thread management functions for worker threads.
 */
 
-// FUNCTION: parse_http() - parses HTTP request to extract the filename
-int parse_http(const char* request_buffer, char* filename, size_t filename_size) {
+// FUNCTION: parse_http_request() - parses HTTP request to extract the filename
+int parse_http_request(const char* request_buffer, char* filename, size_t filename_size) {
     // Find the start of the request line
     const char* method_start = request_buffer;
     
@@ -57,19 +62,26 @@ int parse_http(const char* request_buffer, char* filename, size_t filename_size)
     strncpy(filename, path_start, path_len);
     filename[path_len] = '\0'; // Null terminate
     
+    // If path is "/", serve index.html
+    if (strcmp(filename, "/") == 0) {
+        strncpy(filename, "/index.html", filename_size);
+    }
+    
     return 0; // Success
 }
 
 // Worker thread function that each thread will execute
-void worker_function(void* arg) {
+void *worker_function(void* arg) {
     Worker_Thread* worker = (Worker_Thread*)arg;
 
-    while (!clean_thread_pool) {
+    while (!global_server.config.shutdown_requested) {
 
         Client_Request* request = dequeue_request(&global_server.request_queue);
         
         if (request == NULL) {
-            break; // no request to process
+            // If shutdown requested, we might get NULL or wake up with empty queue
+            if (global_server.config.shutdown_requested) break;
+            continue;
         }
 
         // critical section to update worker status as active
@@ -84,6 +96,13 @@ void worker_function(void* arg) {
         
         // Process HTTP requests ***********************************************
         
+        // Set timeout for socket operations (e.g., 5 seconds)
+        struct timeval tv;
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+        setsockopt(request->client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+        setsockopt(request->client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
+        
         // Read data from the socket
         ssize_t bytes_read = read(request->client_socket, request->request_buffer, 
                                  sizeof(request->request_buffer) - 1);
@@ -94,7 +113,7 @@ void worker_function(void* arg) {
             
             // parse the HTTP request to extract the filename
             char filename[1024];
-            if (parse_http(request->request_buffer, filename, sizeof(filename)) == 0) {
+            if (parse_http_request(request->request_buffer, filename, sizeof(filename)) == 0) {
                 // successfully parsed the filename
                 // log the parsed request (can be removed in production)
                 char log_msg[2048];
@@ -103,19 +122,24 @@ void worker_function(void* arg) {
                                       worker->worker_id, filename);
                 write(STDOUT_FILENO, log_msg, log_len);
                 
-                // TODO: Use filename to serve the requested file **************************
-                // call file handling functions
+                // Construct full path
+                char full_path[2048];
+                snprintf(full_path, sizeof(full_path), "%s%s", 
+                         global_server.config.document_root, filename);
+                
+                // Serve the file
+                serve_file(request->client_socket, full_path, worker->worker_id);
                 
             } else {
                 // failed to parse request
-                write(STDOUT_FILENO, "[Worker] Error: Failed to parse HTTP request\n", 47);
+                send_http_error(request->client_socket, 400, "Bad Request", worker->worker_id);
             }
         } else if (bytes_read == 0) {
             // client closed connection
-            write(STDOUT_FILENO, "[Worker] Client closed connection\n", 36);
+            // write(STDOUT_FILENO, "[Worker] Client closed connection\n", 36);
         } else {
             // read error
-            write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 45);
+            // write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 45);
         }
 
         // critical section to update worker status as inactive
@@ -126,63 +150,40 @@ void worker_function(void* arg) {
         global_server.thread_pool.active_workers--;
         pthread_mutex_unlock(&global_server.thread_pool.pool_mutex);
 
-        // Update server *******************************************************
-
+        // Close the socket
+        close(request->client_socket);
+        
         free(request); // free the processed request
     }
-}
-
-// FUNCTION: dequeue_request() - removes a request from the shared queue
-Client_Request* dequeue_request (Shared_Queue* queue) {
     
-    Client_Request* request = NULL; // pointer to hold dequeued request
-
-    // critical section to access shared queue
-    pthread_mutex_lock(&queue->mutex);
-
-    // while queue is empty and server is running - WAIT
-    while (queue->queue_count == 0 && !global_server.config.shutdown_requested) {
-        pthread_cond_wait(&queue->not_empty, &queue->mutex);
-    }
-
-    // FIFO - remove request from head of queue
-    request = queue->head;
-    if (request != NULL) {
-        queue->head = request->next; // move head to next request
-        
-        // if queue is empty, update tail to NULL
-        if (queue->head == NULL) {
-            queue->tail = NULL;
-        }
-
-        queue->queue_count--;
-
-        pthread_cond_signal(&queue->not_full); // signal that queue is not full
-    }
-    pthread_mutex_unlock(&queue->mutex);
-
-    return request;
+    return NULL;
 }
 
-// FUNCTION: thread_pool() - initializes the thread pool for worker threads
-// all start out inactive and waiting for work from the master thread
-int init_thread_pool(Master_Thread* master, int num_workers) {
-    if (master->num_workers > MAX_WORKERS) {
+// FUNCTION: init_thread_pool() - initializes the thread pool for worker threads
+int init_thread_pool(Thread_Pool* pool, int num_workers) {
+    if (num_workers > 100) { // Hard limit check
         write(STDOUT_FILENO, "Error: Exceeded maximum number of workers\n", 40);
         return -1; // error: too many workers
     }
 
-    master->worker = (Worker_Thread*)malloc(sizeof(Worker_Thread) * num_workers); // allocate memory for worker threads
-    master->num_workers = num_workers; // set the number of workers
+    pool->workers = (Worker_Thread*)malloc(sizeof(Worker_Thread) * num_workers); // allocate memory for worker threads
+    if (pool->workers == NULL) return -1;
+    
+    pool->pool_size = num_workers; // set the number of workers
+    pool->active_workers = 0;
+    pool->shutdown_requested = 0;
+    
+    pthread_mutex_init(&pool->pool_mutex, NULL);
 
     // initialize each worker thread
     for (int i = 0; i < num_workers; i++) {
-        master->worker[i].worker_id = i;
-        master->worker[i].is_active = 0;
-        master->worker[i].num_requests = 0;
-        master->worker[i].last_active = time(NULL);
+        pool->workers[i].worker_id = i;
+        pool->workers[i].is_active = 0;
+        pool->workers[i].num_requests = 0;
+        pool->workers[i].last_active = time(NULL);
+        pool->workers[i].current_request = NULL;
 
-        if (pthread_create(&master->worker[i].thread_id, NULL, worker_function, (void*)&master->worker[i]) != 0) {
+        if (pthread_create(&pool->workers[i].thread_id, NULL, worker_function, (void*)&pool->workers[i]) != 0) {
             write(STDOUT_FILENO, "Error: Failed to create worker thread\n", 38);
             return -1; // error: thread creation failed
         }
@@ -192,10 +193,16 @@ int init_thread_pool(Master_Thread* master, int num_workers) {
 }
 
 // FUNCTION: clean_thread_pool() - cleans up the thread pool and frees resources
-void clean_thread_pool(Master_Thread* master) {
-    for (int i = 0; i < master->num_workers; i++) {
-        pthread_cancel(master->worker[i].thread_id); // cancel the worker thread using pthread_cancel
-        pthread_join(master->worker[i].thread_id, NULL); // wait for thread to finish
+void clean_thread_pool(Thread_Pool* pool) {
+    pool->shutdown_requested = 1;
+    
+    // Signal all workers to wake up
+    pthread_cond_broadcast(&global_server.request_queue.not_empty);
+
+    for (int i = 0; i < pool->pool_size; i++) {
+        pthread_join(pool->workers[i].thread_id, NULL); // wait for thread to finish
     }
-    free(master->worker); // free allocated memory
+    
+    free(pool->workers); // free allocated memory
+    pthread_mutex_destroy(&pool->pool_mutex);
 }

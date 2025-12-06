@@ -9,34 +9,24 @@
 #include <time.h>
 #include <signal.h>
 
-#include "worker.h"
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
 
-// Main global server instance
-struct Web_Server global_server;
-
-// Web server structure
-typedef struct Web_Server {
-    server_config_t config;                // Server configuration
-    Thread_Pool thread_pool;              // Worker thread pool
-    Shared_Queue request_queue;            // Request queue
-    server_stats_t stats;                  // Server statistics
-    
-    // Main server thread
-    pthread_t master_thread;               // Main accept() thread
-    
-    // Signal handling
-    volatile sig_atomic_t signal_received; // For signal handling
-} Web_Server;
-
-// Forward declarations
-typedef struct client_request client_request_t;
-typedef struct request_queue request_queue_t;
-typedef struct thread_pool thread_pool_t;
+typedef struct Web_Server Web_Server;
+typedef struct Client_Request Client_Request;
+typedef struct Shared_Queue Shared_Queue;
+typedef struct Thread_Pool Thread_Pool;
+typedef struct Worker_Thread Worker_Thread;
 typedef struct server_stats server_stats_t;
 typedef struct server_config server_config_t;
 
-// Client request structure
-typedef struct Client_Request {
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+// Client request structure (Linked List Node)
+struct Client_Request {
     int client_socket;                    // Socket file descriptor
     struct sockaddr_in client_addr;       // Client address info
     time_t request_time;                  // When request was received
@@ -44,10 +34,10 @@ typedef struct Client_Request {
     size_t request_size;                  // Size of request data
     int worker_id;                        // Which worker is handling this
     struct Client_Request *next;          // For linked list queue
-} Client_Request;
+};
 
-// Thread-safe request queue (producer-consumer pattern)
-typedef struct Shared_Queue {
+// Thread-safe request queue (Producer-Consumer)
+struct Shared_Queue {
     Client_Request *head;                 // Queue head
     Client_Request *tail;                 // Queue tail
     int queue_count;                      // Current number of requests in queue
@@ -56,21 +46,26 @@ typedef struct Shared_Queue {
     pthread_mutex_t mutex;                // Queue access mutex
     pthread_cond_t not_empty;             // Signal when queue has items
     pthread_cond_t not_full;              // Signal when queue has space
-} Shared_Queue;
+};
 
-// Thread pool structure
-typedef struct Thread_Pool {
+// Worker Thread Structure
+struct Worker_Thread {
+    pthread_t thread_id;             // thread identifier
+    int worker_id;                   // worker identifier
+    int is_active;                   // status flag: 0 = inactive, 1 = active
+    int num_requests;                // number of requests handled
+    time_t last_active;              // timestamp of last thread activity
+    Client_Request* current_request; // pointer to current request being processed
+};
+
+// Thread Pool Structure
+struct Thread_Pool {
     Worker_Thread* workers;               // Array of worker threads
     int pool_size;                        // Number of worker threads
     int active_workers;                   // Currently active workers
     int shutdown_requested;               // Flag to signal shutdown
     pthread_mutex_t pool_mutex;           // Mutex for thread pool data
-} Thread_Pool;
-
-
-
-
-
+};
 
 // Server statistics (thread-safe access required)
 struct server_stats {
@@ -119,7 +114,40 @@ struct server_config {
     pthread_mutex_t log_mutex;           // Thread-safe logging
 };
 
-// Default configuration constants
+// Web server structure
+struct Web_Server {
+    server_config_t config;                // Server configuration
+    Thread_Pool thread_pool;              // Worker thread pool
+    Shared_Queue request_queue;            // Request queue
+    server_stats_t stats;                  // Server statistics
+    
+    // Main server thread
+    pthread_t master_thread;               // Main accept() thread
+    
+    // Signal handling
+    volatile sig_atomic_t signal_received; // For signal handling
+};
+
+// ============================================================================
+// GLOBAL VARIABLES
+// ============================================================================
+
+// Main global server instance
+extern Web_Server global_server;
+
+// Common MIME types array
+typedef struct {
+    char *extension;                     // File extension (e.g., ".html")
+    char *mime_type;                     // MIME type (e.g., "text/html")
+} mime_type_t;
+
+extern mime_type_t g_mime_types[];
+extern int g_mime_types_count;
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 #define DEFAULT_PORT                8080
 #define DEFAULT_THREAD_POOL_SIZE    10
 #define DEFAULT_MAX_CONNECTIONS     100
@@ -128,25 +156,17 @@ struct server_config {
 #define DEFAULT_REQUEST_BUFFER      8192
 #define DEFAULT_RESPONSE_BUFFER     65536
 
-// HTTP status codes
 #define HTTP_OK                     200
 #define HTTP_NOT_FOUND              404
 #define HTTP_INTERNAL_ERROR         500
 
-// MIME type structure for file serving
-typedef struct {
-    char *extension;                     // File extension (e.g., ".html")
-    char *mime_type;                     // MIME type (e.g., "text/html")
-} mime_type_t;
+// ============================================================================
+// FUNCTION PROTOTYPES
+// ============================================================================
 
-// Common MIME types array (defined in globals.c)
-extern mime_type_t g_mime_types[];
-extern int g_mime_types_count;
-
-// Function declarations for global management
 void initialize_server_globals(void);
 void cleanup_server_globals(void);
 void reset_server_stats(void);
 const char* get_mime_type(const char* filename);
 
-#endif
+#endif // GLOBALS_H

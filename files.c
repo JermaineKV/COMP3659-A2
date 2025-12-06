@@ -7,43 +7,39 @@
 #include <stdio.h>
 
 #include "files.h"
-
+#include "globals.h"
 
 /**
- * Get the file type based on file extension
+ * Send an HTTP error response
  */
-const char* get_file_type(const char* filepath) {
-    const char* extension = strrchr(filepath, '.');
+void send_http_error(int client_socket, int status_code, const char* message, int worker_id) {
+    char header[512];
+    char body[512];
     
-    if (extension == NULL) {
-        return "application/octet-stream";
-    }
+    // Create HTML body
+    int body_len = snprintf(body, sizeof(body),
+                           "<html><body><h1>%d %s</h1></body></html>",
+                           status_code, message);
+                           
+    // Create HTTP headers
+    int header_len = snprintf(header, sizeof(header),
+                             "HTTP/1.1 %d %s\r\n"
+                             "Content-Type: text/html\r\n"
+                             "Content-Length: %d\r\n"
+                             "Connection: close\r\n"
+                             "\r\n",
+                             status_code, message, body_len);
+                             
+    // Send headers and body
+    write(client_socket, header, header_len);
+    write(client_socket, body, body_len);
     
-    if (strcmp(extension, ".html") == 0 || strcmp(extension, ".htm") == 0) {
-        return "text/html";
-    } else if (strcmp(extension, ".css") == 0) {
-        return "text/css";
-    } else if (strcmp(extension, ".js") == 0) {
-        return "application/javascript";
-    } else if (strcmp(extension, ".json") == 0) {
-        return "application/json";
-    } else if (strcmp(extension, ".png") == 0) {
-        return "image/png";
-    } else if (strcmp(extension, ".jpg") == 0 || strcmp(extension, ".jpeg") == 0) {
-        return "image/jpeg";
-    } else if (strcmp(extension, ".gif") == 0) {
-        return "image/gif";
-    } else if (strcmp(extension, ".txt") == 0) {
-        return "text/plain";
-    } else if (strcmp(extension, ".pdf") == 0) {
-        return "application/pdf";
-    } else if (strcmp(extension, ".xml") == 0) {
-        return "application/xml";
-    } else if (strcmp(extension, ".svg") == 0) {
-        return "image/svg+xml";
-    } else {
-        return "application/octet-stream";
-    }
+    // Log error
+    char log_msg[512];
+    int log_len = snprintf(log_msg, sizeof(log_msg),
+                          "[Worker %d] Sent Error: %d %s\n",
+                          worker_id, status_code, message);
+    write(STDOUT_FILENO, log_msg, log_len);
 }
 
 /**
@@ -102,7 +98,7 @@ int serve_file(int client_socket, const char* filepath, int worker_id) {
     }
     
     // get the content type based on file extension
-    const char* content_type = get_file_type(filepath);
+    const char* content_type = get_mime_type(filepath);
     
     // create HTTP response headers
     char header[512];
