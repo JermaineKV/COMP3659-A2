@@ -10,6 +10,23 @@
 #include <signal.h>
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+#define DEFAULT_PORT                8080
+#define DEFAULT_THREAD_POOL_SIZE    10
+#define DEFAULT_MAX_CONNECTIONS     100
+#define DEFAULT_QUEUE_SIZE          50
+#define DEFAULT_DOCUMENT_ROOT       "./www"
+#define DEFAULT_REQUEST_BUFFER      8192
+#define DEFAULT_RESPONSE_BUFFER     65536
+
+#define HTTP_OK                     200
+#define HTTP_NOT_FOUND              404
+#define HTTP_INTERNAL_ERROR         500
+
+
+// ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
 
@@ -142,22 +159,6 @@ typedef struct {
 } mime_type_t;
 
 // MIME types array is private to globals.c
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-#define DEFAULT_PORT                8080
-#define DEFAULT_THREAD_POOL_SIZE    10
-#define DEFAULT_MAX_CONNECTIONS     100
-#define DEFAULT_QUEUE_SIZE          50
-#define DEFAULT_DOCUMENT_ROOT       "./www"
-#define DEFAULT_REQUEST_BUFFER      8192
-#define DEFAULT_RESPONSE_BUFFER     65536
-
-#define HTTP_OK                     200
-#define HTTP_NOT_FOUND              404
-#define HTTP_INTERNAL_ERROR         500
 
 // ============================================================================
 // FUNCTION PROTOTYPES
