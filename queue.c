@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "queue.h"
 #include "globals.h"
@@ -67,10 +68,17 @@ void queue_init(Shared_Queue *q, int max_size) {
 void enqueue_request(Shared_Queue *q, int client_socket) {
     if (q == NULL) return;
     
+    // Don't enqueue if shutdown is requested
+    if (global_server.config.shutdown_requested) {
+        close(client_socket);
+        return;
+    }
+    
     // create new request object
     Client_Request *request = (Client_Request*)malloc(sizeof(Client_Request));
     if (request == NULL) {
         perror("Failed to allocate memory for request");
+        close(client_socket);
         return;
     }
     
@@ -81,8 +89,14 @@ void enqueue_request(Shared_Queue *q, int client_socket) {
     
     pthread_mutex_lock(&q->mutex);
     
-    // wait while queue is full
+    // wait while queue is full (with shutdown check)
     while (q->queue_count >= q->max_size) {
+        if (global_server.config.shutdown_requested) {
+            pthread_mutex_unlock(&q->mutex);
+            close(client_socket);
+            free(request);
+            return;
+        }
         pthread_cond_wait(&q->not_full, &q->mutex);
     }
     
@@ -137,12 +151,20 @@ Client_Request* dequeue_request(Shared_Queue *q) {
     
     // wait while queue is empty
     while (q->queue_count == 0) {
-        // check for shutdown condition
-        if (global_server.config.shutdown_requested) {
+        // check for shutdown condition before and after wait
+        if (global_server.config.shutdown_requested || 
+            global_server.thread_pool.shutdown_requested) {
             pthread_mutex_unlock(&q->mutex);
             return NULL;
         }
         pthread_cond_wait(&q->not_empty, &q->mutex);
+        
+        // Re-check shutdown after waking up
+        if (global_server.config.shutdown_requested || 
+            global_server.thread_pool.shutdown_requested) {
+            pthread_mutex_unlock(&q->mutex);
+            return NULL;
+        }
     }
     
     // remove from head

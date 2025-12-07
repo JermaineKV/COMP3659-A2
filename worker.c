@@ -194,10 +194,10 @@ void *worker_function(void* arg) {
             }
         } else if (bytes_read == 0) {
             // client closed connection
-            write(STDOUT_FILENO, "[Worker] Client closed connection\n", 36);
+            write(STDOUT_FILENO, "[Worker] Client closed connection\n", 35);
         } else {
             // read error
-            write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 45);
+            write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 44);
         }
 
         // critical section to update worker status as inactive

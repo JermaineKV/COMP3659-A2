@@ -49,9 +49,9 @@ void send_http_error(int client_socket, int status_code, const char* message, in
                              "\r\n",
                              status_code, message, body_len);
                              
-    // send headers and body
-    write(client_socket, header, header_len);
-    write(client_socket, body, body_len);
+    // send headers and body (ignore errors - client may have disconnected)
+    if (write(client_socket, header, header_len) < 0) return;
+    if (write(client_socket, body, body_len) < 0) return;
     
     // log error
     char log_msg[512];
@@ -185,17 +185,16 @@ int serve_file(int client_socket, const char* filepath, int worker_id) {
                              "\r\n",
                              content_type, file_size);
     
-    // send HTTP headers
+    // send HTTP headers (ignore partial writes - client may have disconnected)
     ssize_t bytes_sent = write(client_socket, header, header_len);
-    if (bytes_sent != header_len) {
+    if (bytes_sent < 0) {
         free(file_buffer);
-        send_http_error(client_socket, 500, "Internal Server Error", worker_id);
-        return -1;
+        return -1; // Don't try to send error if write failed
     }
     
     // send file contents
     bytes_sent = write(client_socket, file_buffer, file_size);
-    if (bytes_sent != file_size) {
+    if (bytes_sent < 0) {
         free(file_buffer);
         return -1;
     }

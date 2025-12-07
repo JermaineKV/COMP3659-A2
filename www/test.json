@@ -1,0 +1,9 @@
+{
+    "status": "ok",
+    "message": "This is a test JSON file",
+    "data": {
+        "server": "COMP3659 Web Server",
+        "version": "1.0",
+        "features": ["threading", "queue", "static-files"]
+    }
+}

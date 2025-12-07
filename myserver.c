@@ -155,6 +155,9 @@ int main(int argc, char *argv[]) {
 
     int port = global_server.config.port;
     
+    // Ignore SIGPIPE to prevent crashes when writing to closed sockets
+    signal(SIGPIPE, SIG_IGN);
+    
     // setup signal handling
     struct sigaction sa;
     sa.sa_handler = handle_signal;
@@ -188,8 +191,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // listen on socket
-    if (listen(global_server.config.server_socket, 10) < 0) {
+    // listen on socket (increased backlog for concurrent connections)
+    if (listen(global_server.config.server_socket, 128) < 0) {
         perror("Listen failed");
         exit(EXIT_FAILURE);
     }
