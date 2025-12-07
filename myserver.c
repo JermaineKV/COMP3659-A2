@@ -1,3 +1,19 @@
+/*
+ * myserver.c - Main entry point for multithreaded web server
+ *
+ * This is the main server program that initializes all components and runs
+ * the accept loop. The server uses a thread pool to handle HTTP requests.
+ *
+ * Server startup sequence:
+ *   1. Initialize global state and mutexes
+ *   2. Create listening socket and bind to port
+ *   3. Start worker thread pool
+ *   4. Accept connections and enqueue to worker threads
+ *   5. On SIGINT/SIGTERM: graceful shutdown
+ *
+ * Usage: ./myserver [port]   (default port: 8080)
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,52 +27,10 @@
 #include "worker.h"
 #include "queue.h"
 
-/**
- * ============================================================================
- * MODULE: Web Server
- * ============================================================================
- * 
- * This is the main entry point for the multithreaded HTTP web server. 
- * The server:
- *   1. Initializes global state and synchronization primitives
- *   2. Sets up signal handling for graceful shutdown (SIGINT, SIGTERM)
- *   3. Creates a listening socket on a specified port
- *   4. Initializes a thread pool of worker threads
- *   5. Accepts incoming client connections in the main loop
- *   6. Enqueues each connection to worker threads for processing
- *   7. Performs graceful shutdown when signaled
- * 
- * Key Components:
- *   - handle_signal(): Signal handler for SIGINT/SIGTERM
- *   - main(): Server initialization, main accept loop, and cleanup
- * 
- * ============================================================================
- */
-
 // Global flag for server running state
 volatile sig_atomic_t server_running = 1;
 
-/**
- * ============================================================================
- * FUNCTION: handle_signal
- * ============================================================================
- * 
- * Signal handler for SIGINT (Ctrl+C) and SIGTERM. Sets global shutdown flags
- * and closes the server socket to initiate graceful shutdown of the server.
- * 
- * PARAMETERS:
- *   - sig:     Signal number received (SIGINT=2 or SIGTERM=15
- *              Handler only processes SIGINT and SIGTERM, ignores others
- * 
- * RETURN VALUE:
- *   - void:    Function is called by the kernel when signal is received.
- * 
- * NOTES:
- *   - Called asynchronously by kernel
- *   - Coordinates shutdown with main thread via flags
- * 
- * ============================================================================
- */
+/* Signal handler for graceful shutdown (SIGINT/SIGTERM) */
 void handle_signal(int sig) {
     if (sig == SIGINT || sig == SIGTERM) {
         printf("\nShutting down server...\n");
@@ -71,76 +45,7 @@ void handle_signal(int sig) {
     }
 }
 
-/**
- * ============================================================================
- * FUNCTION: main()
- * ============================================================================
- * 
- * Main entry point for the HTTP web server. Initializes all server components,
- * sets up networking, creates worker threads, and runs the main accept loop
- * to accept client connections and distribute them to workers.
- * 
- * PARAMETERS:
- *   - argc:    Argument count (number of command-line arguments)
- *   - argv:    Argument vector. argv[0] is program name
- *              Optional argv[1]: port number (default 8080)
- * 
- * RETURN VALUE:
- *   - 0: Success.      Server initialized, ran, and shut down cleanly.
- *   - EXIT_FAILURE:    Failure during initialization. Possible reasons:
- *      > Socket creation failed
- *      > setsockopt failed (SO_REUSEADDR)
- *      > Bind failed (port already in use)
- *      > Listen failed
- * 
- * COMMAND-LINE USAGE:
- *   ./myserver              - Run on default port 8080
- *   ./myserver 9000         - Run on port 9000
- *   ./myserver 8888         - Run on port 8888
- * 
- * BEHAVIOR (9 main steps):
- *   1. Initialize globals:
- *      - Calls initialize_server_globals() to set default config
- *      - Calls queue_init() to create request queue mutexes/conditions
- *      - Parses optional port argument (argv[1]) if provided
- *   2. Setup signal handling:
- *      - Creates sigaction structure
- *      - Sets sa_handler to handle_signal()
- *      - Registers handler for SIGINT (Ctrl+C) and SIGTERM
- *   3. Create server socket:
- *      - Calls socket(AF_INET, SOCK_STREAM, 0) for TCP socket
- *      - On failure: prints error, exits with EXIT_FAILURE
- *   4. Set socket options:
- *      - Sets SO_REUSEADDR to allow socket reuse after restart
- *      - Prevents "Address already in use" errors on restart
- *   5. Bind socket:
- *      - Creates sockaddr_in structure with port and INADDR_ANY
- *      - Binds socket to all interfaces (0.0.0.0) on configured port
- *   6. Listen on socket:
- *      - Sets socket to listening mode (passive socket)
- *      - Backlog of 10 (max pending connections in accept queue)
- *   7. Initialize thread pool:
- *      - Calls init_thread_pool() to create worker threads
- *      - Creates thread pool with DEFAULT_THREAD_POOL_SIZE workers
- *   8. Main accept loop:
- *      - While server_running (set by signal handler):
- *         a. Calls accept() to wait for incoming connection
- *         b. On accept failure: logs error, continues loop
- *         c. On success: enqueues socket to request_queue
- *      - Continues until signal received (server_running becomes 0)
- *   9. Cleanup and shutdown:
- *      - Calls clean_thread_pool() to gracefully exit all workers
- *      - Calls cleanup_server_globals() to free resources
- *      - Prints shutdown complete message
- *      - Returns 0
- * 
- * NOTES:
- *   - Default port is 8080, configurable via command line
- *   - Document root defaults to "./www" (defined in globals.h)
- *   - Thread pool size defaults to 10 (defined in globals.h)
- * 
- * ============================================================================
- */
+/* Main entry point - sets up socket, thread pool, and runs accept loop */
 int main(int argc, char *argv[]) {
     // initialize globals with defaults
     initialize_server_globals();

@@ -1,3 +1,16 @@
+/*
+ * queue.c - Thread-safe request queue implementation
+ *
+ * Implements a bounded buffer queue for the producer-consumer pattern.
+ * The main thread (producer) enqueues client connections, and worker
+ * threads (consumers) dequeue and process them.
+ *
+ * Synchronization:
+ *   - mutex: Protects queue operations
+ *   - not_empty: Signals workers when queue has items
+ *   - not_full: Signals producer when queue has space
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -6,27 +19,7 @@
 #include "queue.h"
 #include "globals.h"
 
-/**
- * ============================================================================
- * FUNCTION: queue_init()
- * ============================================================================
- * 
- * Initializes the shared request queue structure with empty state and creates
- * synchronization primitives (mutex and condition variables).
- * 
- * PARAMETERS:
- *   - q:           Pointer to the Shared_Queue structure to initialize
- *                  Must point to valid allocated memory
- *   - max_size:    Maximum number of requests the queue can hold
- * 
- * RETURN VALUE:
- *   - void:        No return value
- * 
- * NOTES:
- *   - Must be called once before any other queue functions
- * 
- * ============================================================================
- */
+/* Initialize the request queue with mutex and condition variables */
 void queue_init(Shared_Queue *q, int max_size) {
     if (q == NULL) return;
     
@@ -40,31 +33,7 @@ void queue_init(Shared_Queue *q, int max_size) {
     pthread_cond_init(&q->not_full, NULL);
 }
 
-/**
- * ============================================================================
- * FUNCTION: enqueue_request()
- * ============================================================================
- * 
- * Adds a client request to the tail of the queue. Allocates memory for the
- * request, acquires mutex lock, waits if queue is full, adds request to queue, 
- * signals waiting worker threads, and releases lock.
- * 
- * PARAMETERS:
- *   - q:               Pointer to the Shared_Queue structure where request
- *                      will be added. Must be initialized via queue_init()
- *   - client_socket:   Socket file descriptor of the connected client
- *                      This is what worker threads will read from
- * 
- * RETURN VALUE:
- *   - void:            No return value
- * 
- * NOTES:
- *   - Blocking operation: can pause main thread if queue is full
- *   - Only signals one worker thread (pthread_cond_signal)
- *      - If multiple workers are sleeping, only one wakes up
- * 
- * ============================================================================
- */
+/* Add a client socket to the queue. Blocks if queue is full. */
 void enqueue_request(Shared_Queue *q, int client_socket) {
     if (q == NULL) return;
     
@@ -117,32 +86,7 @@ void enqueue_request(Shared_Queue *q, int client_socket) {
     pthread_mutex_unlock(&q->mutex);
 }
 
-/**
- * ============================================================================
- * FUNCTION: dequeue_request()
- * ============================================================================
- * 
- * Removes and returns a request from the head of the queue. Acquires mutex
- * lock, waits if queue is empty (blocking until request arrives), removes
- * request from head, signals backpressure relief if queue was full, and
- * releases lock.
- * 
- * PARAMETERS:
- *   - q:   Pointer to the Shared_Queue structure to dequeue from
- *          Must be initialized via queue_init(). Called by worker threads 
- *          in worker_function().
- * 
- * RETURN VALUE:
- *   - Client_Request*: Pointer to dequeued Client_Request structure
- *      > Non-NULL:     Success. Request contains client_socket and other info.
- *      > NULL:         Queue is empty and shutdown was requested
- * 
- * NOTES:
- *   - Blocking operation: worker threads sleep here when no requests
- *   - Caller must free() the returned Client_Request when done
- * 
- * ============================================================================
- */
+/* Remove and return next request from queue. Blocks if empty. Returns NULL on shutdown. */
 Client_Request* dequeue_request(Shared_Queue *q) {
     if (q == NULL) return NULL; // invalid queue pointer
     
