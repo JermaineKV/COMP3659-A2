@@ -10,18 +10,37 @@
 #include "globals.h"
 
 /**
- * Send an HTTP error response
+ * ============================================================================
+ * FUNCTION: send_http_error()
+ * ============================================================================
+ * 
+ * Sends an HTTP error response with appropriate status code and error message
+ * back to the client. Constructs proper HTTP headers and an HTML error page.
+ * 
+ * PARAMETERS:
+ *   - client_socket:   Socket file descriptor of the client connection.
+ *                      Used to write the error response back to client
+ *   - status_code:     HTTP status code (e.g., 404, 500, 400)
+ *   - message:         Readable error message (e.g., "Not Found")
+ *                      Displayed in HTTP response and HTML body
+ *   - worker_id:       ID of the worker thread processing this request
+ *                      Used for logging/debugging purposes if needed
+ * 
+ * RETURN VALUE:
+ *   - void: The function doesn't return a value. Errors are logged to STDOUT
+ * 
+ * ============================================================================
  */
 void send_http_error(int client_socket, int status_code, const char* message, int worker_id) {
-    char header[512];
-    char body[512];
+    char header[512]; // HTTP response header buffer
+    char body[512];   // HTML body buffer
     
-    // Create HTML body
+    // create HTML body
     int body_len = snprintf(body, sizeof(body),
                            "<html><body><h1>%d %s</h1></body></html>",
                            status_code, message);
                            
-    // Create HTTP headers
+    // create HTTP headers - general practice
     int header_len = snprintf(header, sizeof(header),
                              "HTTP/1.1 %d %s\r\n"
                              "Content-Type: text/html\r\n"
@@ -30,20 +49,49 @@ void send_http_error(int client_socket, int status_code, const char* message, in
                              "\r\n",
                              status_code, message, body_len);
                              
-    // Send headers and body
+    // send headers and body
     write(client_socket, header, header_len);
     write(client_socket, body, body_len);
     
-    // Log error
+    // log error
     char log_msg[512];
     int log_len = snprintf(log_msg, sizeof(log_msg),
                           "[Worker %d] Sent Error: %d %s\n",
                           worker_id, status_code, message);
-    write(STDOUT_FILENO, log_msg, log_len);
+    write(STDOUT_FILENO, log_msg, log_len); // output to terminal
 }
 
 /**
- * Read a file into a dynamically allocated buffer
+ * ============================================================================
+ * FUNCTION: read_file()
+ * ============================================================================
+ * 
+ * Reads the complete contents of a file into a dynamically allocated buffer.
+ * Opens file in read only mode, determines size, allocates memory, and reads
+ * all bytes into the provided buffer pointer.
+ * 
+ * PARAMETERS:
+ *   - filepath:    Path to the file to be read (e.g., "./www/index.html").
+ *                  Must be a valid null-terminated string
+ *   - buffer:      Pointer to char pointer. Points to newly allocated memory 
+ *                  containing file contents. Caller must free() this memory
+ *   - file_size:   Pointer to ssize_t. Stores the number of bytes read from 
+ *                  the file
+ * 
+ * RETURN VALUE:
+ *   - 0: Success. File was read completely and buffer allocated.
+ *   - -1: Failure.
+ *      > File does not exist or cannot be opened
+ *      > Cannot stat file (fstat failed)
+ *      > Memory allocation failed
+ *      > Read operation failed (bytes read != expected size)
+ * 
+ * NOTES:
+ *   - Caller must free() the allocated buffer when done
+ *   - No null terminator is added to buffer (raw file contents)
+ *   - Large files may cause memory issues if malloc fails
+ * 
+ * ============================================================================
  */
 int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
     struct stat file_stat;
@@ -67,7 +115,7 @@ int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
     *buffer = (char*)malloc(*file_size);
     if (*buffer == NULL) {
         close(fd);
-        return -1; // Memory allocation failed
+        return -1; // memory allocation failed
     }
     
     // read the entire file into the buffer
@@ -76,7 +124,7 @@ int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
         free(*buffer);
         *buffer = NULL;
         close(fd);
-        return -1; // read error
+        return -1; // error
     }
     
     close(fd);
@@ -84,7 +132,34 @@ int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
 }
 
 /**
- * Serve a file over a socket with proper HTTP headers
+ * ============================================================================
+ * FUNCTION: serve_file()
+ * ============================================================================
+ * 
+ * Serves a file to a client over HTTP. Reads the file from disk, determines 
+ * its file type, constructs proper HTTP response headers, and sends both 
+ * headers and file contents to the client socket.
+ * 
+ * PARAMETERS:
+ *   - client_socket:   Socket file descriptor of the connected client
+ *                      Used to send HTTP response
+ *   - filepath:        Full path to the file to serve (e.g., "./www/index.html")
+ *                      Must be a valid null-terminated string
+ *   - worker_id:       ID of the worker thread processing this request
+ *                      Used for logging/debugging purposes
+ * 
+ * RETURN VALUE:
+ *   - 0: Success. File was read and sent to client with "HTTP 200 OK" response.
+ *   - -1: Failure.
+ *      > File does not exist or cannot be read (sends "404 Not Found")
+ *      > Socket write failed when sending headers (sends "500 Internal Server Error")
+ *      > Socket write failed when sending file contents
+ * 
+ * NOTES:
+ *   - Memory allocated by read_file() is freed before returning
+ *   - Assumes client_socket is a valid, connected socket
+ * 
+ * ============================================================================
  */
 int serve_file(int client_socket, const char* filepath, int worker_id) {
     char* file_buffer = NULL;
