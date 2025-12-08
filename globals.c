@@ -10,9 +10,14 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <signal.h>
 
 /* Global server instance */
 Web_Server global_server;
+
+/* Global server running flag */
+volatile sig_atomic_t server_running = 1;
 
 /* MIME type mappings for Content-Type header */
 mime_type_t g_mime_types[] = {
@@ -118,4 +123,24 @@ const char* get_mime_type(const char* filename) {
     }
     
     return "application/octet-stream";
+}
+
+/**
+ * @brief Signal handler for SIGINT and SIGTERM
+ * @param sig The signal number received
+ * @details Sets server_running = 0 and shutdown_requested = 1.
+ *          Closes server socket to unblock accept().
+ */
+void handle_signal(int sig) {
+    if (sig == SIGINT || sig == SIGTERM) {
+        write(STDOUT_FILENO, "\nShutting down server...\n", 26);
+        server_running = 0;
+        global_server.config.shutdown_requested = 1; // set global shutdown flag
+        
+        // close the server socket to break the accept loop if possible
+        if (global_server.config.server_socket > 0) {
+            close(global_server.config.server_socket);
+            global_server.config.server_socket = -1;
+        }
+    }
 }

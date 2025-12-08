@@ -21,29 +21,6 @@
 #include "worker.h"
 #include "queue.h"
 
-// Global flag for server running state
-volatile sig_atomic_t server_running = 1;
-
-/**
- * @brief Signal handler for SIGINT and SIGTERM
- * @param sig The signal number received
- * @details Sets server_running = 0 and shutdown_requested = 1.
- *          Closes server socket to unblock accept().
- */
-void handle_signal(int sig) {
-    if (sig == SIGINT || sig == SIGTERM) {
-        write(STDOUT_FILENO, "\nShutting down server...\n", 26);
-        server_running = 0;
-        global_server.config.shutdown_requested = 1; // set global shutdown flag
-        
-        // close the server socket to break the accept loop if possible
-        if (global_server.config.server_socket > 0) {
-            close(global_server.config.server_socket);
-            global_server.config.server_socket = -1;
-        }
-    }
-}
-
 /**
  * @brief Main entry point - sets up socket, thread pool, and runs accept loop
  * @param argc Argument count

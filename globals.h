@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <time.h>
+#include <signal.h>
 
 /* Server configuration constants */
 #define DEFAULT_PORT                8080
@@ -102,6 +103,9 @@ struct Web_Server {
 /* Global server instance (defined in globals.c) */
 extern Web_Server global_server;
 
+/* Global server running flag */
+extern volatile sig_atomic_t server_running;
+
 /* MIME type mapping */
 typedef struct {
     char *extension;
@@ -122,5 +126,11 @@ void cleanup_server_globals(void);
  * @return MIME type string (e.g., "text/html") or "application/octet-stream"
  */
 const char* get_mime_type(const char* filename);
+
+/**
+ * @brief Signal handler for SIGINT and SIGTERM
+ * @param sig The signal number received
+ */
+void handle_signal(int sig);
 
 #endif

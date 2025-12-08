@@ -4,7 +4,7 @@
  * This file contains unit tests for individual functions in the web server.
  * Tests are run standalone (not as part of running server).
  *
- * Compile: gcc -Wall -Wextra -pthread -g -o test_units test_units.c queue.c globals.c -DTEST_MODE
+ * Compile: gcc -Wall -Wextra -pthread -g -o test_units test_units.c queue.c globals.c worker.c files.c -DTEST_MODE
  * Run:     ./test_units
  */
 
@@ -14,9 +14,15 @@
 #include <assert.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <signal.h>
 
 #include "globals.h"
 #include "queue.h"
+#include "files.h"
+#include "worker.h"
 
 /* Test Counters */
 static int tests_run = 0;
@@ -34,10 +40,20 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-/* TEST: parse_http_request function */
-/* Forward declaration (from worker.c) */
-int parse_http_request(const char* request_buffer, char* filename, size_t filename_size);
+/* Helper to create a temp file */
+void create_temp_file(const char* filename, const char* content) {
+    FILE* f = fopen(filename, "w");
+    if (f) {
+        fprintf(f, "%s", content);
+        fclose(f);
+    }
+}
 
+void delete_temp_file(const char* filename) {
+    unlink(filename);
+}
+
+/* TEST: parse_http_request function */
 void test_parse_http_request() {
     printf("\n=== Testing parse_http_request() ===\n");
     
@@ -91,7 +107,6 @@ void test_parse_http_request() {
 }
 
 /* TEST: Queue Operations */
-
 void test_queue_init() {
     printf("\n=== Testing queue_init() ===\n");
     
@@ -156,9 +171,6 @@ void test_enqueue_dequeue() {
 }
 
 /* TEST: MIME Type Detection */
-/* Forward declaration (from globals.c) */
-const char* get_mime_type(const char* filename);
-
 void test_mime_types() {
     printf("\n=== Testing get_mime_type() ===\n");
     
@@ -205,7 +217,6 @@ void test_mime_types() {
 }
 
 /* TEST: Thread Safety (Basic) */
-
 #define NUM_PRODUCER_THREADS 5
 #define NUM_REQUESTS_PER_THREAD 20
 
@@ -302,7 +313,6 @@ void test_thread_safety() {
 }
 
 /* TEST: Server Configuration */
-
 void test_server_config() {
     printf("\n=== Testing Server Configuration ===\n");
     
@@ -321,11 +331,222 @@ void test_server_config() {
     cleanup_server_globals();
 }
 
-/* Main */
+/* TEST: read_file */
+void test_read_file() {
+    printf("\n=== Testing read_file() ===\n");
+    const char* fname = "test_read.txt";
+    const char* content = "Hello World";
+    create_temp_file(fname, content);
 
+    char* buffer = NULL;
+    ssize_t size = 0;
+    
+    int res = read_file(fname, &buffer, &size);
+    TEST_ASSERT(res == 0, "read_file returns 0 on success");
+    TEST_ASSERT(size == (ssize_t)strlen(content), "read_file returns correct size");
+    if (buffer) {
+        TEST_ASSERT(strncmp(buffer, content, size) == 0, "read_file returns correct content");
+        free(buffer);
+    } else {
+        TEST_ASSERT(0, "read_file allocated buffer");
+    }
+
+    // Test non-existent file
+    res = read_file("non_existent_file.txt", &buffer, &size);
+    TEST_ASSERT(res == -1, "read_file returns -1 for missing file");
+
+    delete_temp_file(fname);
+}
+
+/* TEST: serve_file and send_http_error using pipe */
+void test_http_responses() {
+    printf("\n=== Testing serve_file() and send_http_error() ===\n");
+    
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return;
+    }
+    
+    // Make read end non-blocking so we don't hang if test fails
+    int flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+
+    // 1. Test send_http_error
+    send_http_error(pipefd[1], 404, "Not Found", 0);
+    
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    // Wait briefly for write to complete
+    usleep(10000);
+    ssize_t bytes = read(pipefd[0], buffer, sizeof(buffer)-1);
+    
+    TEST_ASSERT(bytes > 0, "send_http_error wrote to socket");
+    if (bytes > 0) {
+        TEST_ASSERT(strstr(buffer, "HTTP/1.1 404 Not Found") != NULL, "Header contains 404 Not Found");
+        TEST_ASSERT(strstr(buffer, "<h1>404 Not Found</h1>") != NULL, "Body contains error message");
+    }
+
+    // 2. Test serve_file
+    const char* fname = "test_serve.html";
+    const char* content = "<html><body>Test</body></html>";
+    create_temp_file(fname, content);
+    
+    serve_file(pipefd[1], fname, 0);
+    
+    memset(buffer, 0, sizeof(buffer));
+    usleep(10000); 
+    
+    bytes = read(pipefd[0], buffer, sizeof(buffer)-1);
+    
+    TEST_ASSERT(bytes > 0, "serve_file wrote to socket");
+    if (bytes > 0) {
+        TEST_ASSERT(strstr(buffer, "HTTP/1.1 200 OK") != NULL, "Header contains 200 OK");
+        TEST_ASSERT(strstr(buffer, "Content-Type: text/html") != NULL, "Header contains correct MIME type");
+        
+        // If body wasn't read in first chunk, try reading more
+        if (strstr(buffer, content) == NULL) {
+             ssize_t more = read(pipefd[0], buffer + bytes, sizeof(buffer) - 1 - bytes);
+             if (more > 0) bytes += more;
+        }
+        TEST_ASSERT(strstr(buffer, content) != NULL, "Body contains file content");
+    }
+
+    delete_temp_file(fname);
+    close(pipefd[0]);
+    close(pipefd[1]);
+}
+
+/* TEST: Thread Pool Lifecycle */
+void test_thread_pool_lifecycle() {
+    printf("\n=== Testing Thread Pool Lifecycle ===\n");
+    
+    // Initialize globals first as workers depend on them
+    initialize_server_globals();
+    queue_init(&global_server.request_queue, 10);
+    
+    Thread_Pool pool;
+    int res = init_thread_pool(&pool, 3);
+    TEST_ASSERT(res == 0, "init_thread_pool returns 0");
+    TEST_ASSERT(pool.pool_size == 3, "Pool size is 3");
+    TEST_ASSERT(pool.workers != NULL, "Workers array allocated");
+    
+    if (pool.workers) {
+        TEST_ASSERT(pool.workers[0].worker_id == 0, "Worker 0 initialized");
+    }
+    
+    // Signal shutdown so workers exit
+    global_server.config.shutdown_requested = 1;
+    clean_thread_pool(&pool);
+    
+    TEST_ASSERT(1, "clean_thread_pool completed without crash");
+    
+    cleanup_server_globals();
+}
+
+/* TEST: cleanup_server_globals */
+void test_cleanup_globals() {
+    printf("\n=== Testing cleanup_server_globals() ===\n");
+    initialize_server_globals();
+    
+    // Add something to queue to see if it gets freed
+    queue_init(&global_server.request_queue, 10);
+    enqueue_request(&global_server.request_queue, 999);
+    
+    cleanup_server_globals();
+    TEST_ASSERT(global_server.request_queue.queue_count == 0, "Queue count is 0 after cleanup");
+}
+
+/* TEST: handle_signal */
+void test_handle_signal() {
+    printf("\n=== Testing handle_signal() ===\n");
+    initialize_server_globals();
+    server_running = 1;
+    
+    // Simulate SIGINT
+    handle_signal(SIGINT);
+    
+    TEST_ASSERT(server_running == 0, "server_running set to 0 after SIGINT");
+    TEST_ASSERT(global_server.config.shutdown_requested == 1, "shutdown_requested set to 1 after SIGINT");
+    
+    cleanup_server_globals();
+}
+
+/* TEST: worker_function (Integration-like test) */
+void test_worker_function() {
+    printf("\n=== Testing worker_function() ===\n");
+    
+    initialize_server_globals();
+    strcpy(global_server.config.document_root, "."); // Set root to current dir for test
+    queue_init(&global_server.request_queue, 10);
+    
+    // Create a socket pair to simulate client-server connection
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
+        perror("socketpair");
+        return;
+    }
+    
+    // Create a dummy file to serve
+    const char* fname = "test_worker.html";
+    const char* content = "<html><body>Worker Test</body></html>";
+    create_temp_file(fname, content);
+    
+    // Enqueue the "client" socket (sv[1])
+    // Note: worker_function will close this socket when done
+    enqueue_request(&global_server.request_queue, sv[1]);
+    
+    // Prepare worker thread structure
+    Worker_Thread worker;
+    worker.worker_id = 0;
+    worker.is_active = 0;
+    worker.num_requests = 0;
+    worker.last_active = time(NULL);
+    worker.current_request = NULL;
+    
+    // Start worker thread
+    pthread_create(&worker.thread_id, NULL, worker_function, &worker);
+    
+    // Send HTTP request through the "server" socket (sv[0])
+    // We need to send enough data for the worker to read
+    const char* request = "GET /test_worker.html HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    write(sv[0], request, strlen(request));
+    
+    // Read response from sv[0]
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    
+    // Give worker time to process
+    usleep(100000); 
+    
+    ssize_t bytes = read(sv[0], buffer, sizeof(buffer)-1);
+    
+    TEST_ASSERT(bytes > 0, "Worker sent response");
+    if (bytes > 0) {
+        TEST_ASSERT(strstr(buffer, "HTTP/1.1 200 OK") != NULL, "Response is 200 OK");
+        TEST_ASSERT(strstr(buffer, content) != NULL, "Response contains file content");
+    }
+    
+    // Signal shutdown to stop the worker loop
+    global_server.config.shutdown_requested = 1;
+    pthread_cond_broadcast(&global_server.request_queue.not_empty);
+    
+    // Wait for worker to exit
+    pthread_join(worker.thread_id, NULL);
+    
+    TEST_ASSERT(1, "Worker thread exited cleanly");
+    
+    // Cleanup
+    close(sv[0]);
+    // sv[1] is closed by worker
+    delete_temp_file(fname);
+    cleanup_server_globals();
+}
+
+/* Main */
 int main() {
-    printf("COMP3659 Web Server - Unit Test Suite\n");
-    printf("-----------------------------------\n");
+    printf("COMP3659 Web Server - Comprehensive Unit Test Suite\n");
+    printf("---------------------------------------------------\n");
     
     // Run all tests
     test_parse_http_request();
@@ -333,7 +554,13 @@ int main() {
     test_enqueue_dequeue();
     test_mime_types();
     test_server_config();
+    test_read_file();
+    test_http_responses();
+    test_thread_pool_lifecycle();
+    test_cleanup_globals();
     test_thread_safety();
+    test_handle_signal();
+    test_worker_function();
     
     /* Print summary */
     printf("\nTEST SUMMARY\n");
