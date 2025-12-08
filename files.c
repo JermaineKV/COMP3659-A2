@@ -1,15 +1,16 @@
-/*
- * files.c - File operations and HTTP response handling
+/**
+ * @file files.c
+ * @brief File operations and HTTP response handling
  *
  * Implements file I/O and HTTP response generation. Reads static files from
  * the document root and sends them to clients with proper HTTP headers.
  *
  * HTTP response format:
- *   HTTP/1.1 <status> <message>
- *   Content-Type: <mime-type>
- *   Content-Length: <size>
- *   Connection: close
- *   <blank line>
+ *   HTTP/1.1 <status> <message>\r\n
+ *   Content-Type: <mime-type>\r\n
+ *   Content-Length: <size>\r\n
+ *   Connection: close\r\n
+ *   \r\n
  *   <body>
  */
 
@@ -24,7 +25,18 @@
 #include "files.h"
 #include "globals.h"
 
-/* Send an HTTP error response (e.g., 404, 500) to the client */
+/**
+ * @brief Send an HTTP error response to the client
+ * @param client_socket The client socket file descriptor
+ * @param status_code HTTP status code (e.g., 404, 500)
+ * @param message HTTP status message (e.g., "Not Found")
+ * @param worker_id The worker thread ID for logging
+ * @details
+ *   - Creates HTML body: "<h1>404 Not Found</h1>"
+ *   - Builds HTTP response header with Content-Type: text/html
+ *   - Writes header and body to socket
+ *   - Logs error to stdout
+ */
 void send_http_error(int client_socket, int status_code, const char* message, int worker_id) {
     char header[512]; // HTTP response header buffer
     char body[512];   // HTML body buffer
@@ -55,7 +67,18 @@ void send_http_error(int client_socket, int status_code, const char* message, in
     write(STDOUT_FILENO, log_msg, log_len); // output to terminal
 }
 
-/* Read entire file into buffer. Caller must free() buffer. Returns 0 on success, -1 on error. */
+/**
+ * @brief Read entire file into buffer
+ * @param filepath Path to the file to read
+ * @param buffer Output pointer to allocated buffer (caller must free)
+ * @param file_size Output pointer to store file size
+ * @return 0 on success, -1 on error
+ * @details
+ *   - Opens file with open() in read-only mode
+ *   - Gets file size with fstat()
+ *   - Allocates buffer with malloc()
+ *   - Reads entire file into buffer
+ */
 int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
     struct stat file_stat;
     
@@ -94,7 +117,19 @@ int read_file(const char* filepath, char** buffer, ssize_t* file_size) {
     return 0; // success
 }
 
-/* Serve a file over HTTP. Sends 404 if not found. Returns 0 on success, -1 on error. */
+/**
+ * @brief Serve a file over HTTP
+ * @param client_socket The client socket file descriptor
+ * @param filepath Path to the file to serve
+ * @param worker_id The worker thread ID for logging
+ * @return 0 on success, -1 on error
+ * @details
+ *   - Calls read_file() to load file contents
+ *   - If file not found, calls send_http_error(404)
+ *   - Calls get_mime_type() for Content-Type header
+ *   - Builds and sends HTTP 200 response with file body
+ *   - Logs success with file size and MIME type
+ */
 int serve_file(int client_socket, const char* filepath, int worker_id) {
     char* file_buffer = NULL;
     ssize_t file_size = 0;

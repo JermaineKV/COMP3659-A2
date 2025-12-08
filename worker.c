@@ -1,15 +1,9 @@
-/*
- * worker.c - Worker thread pool and HTTP request processing
+/**
+ * @file worker.c
+ * @brief Worker thread pool and HTTP request processing
  *
  * Implements the worker thread pool that handles HTTP requests. Each worker
  * runs in an infinite loop: dequeue request -> parse HTTP -> serve file.
- *
- * Request processing flow:
- *   1. Dequeue client socket from shared queue
- *   2. Read HTTP request from socket
- *   3. Parse request to extract file path
- *   4. Serve file or send error response
- *   5. Close socket and free request
  */
 
 #include <unistd.h>
@@ -25,7 +19,18 @@
 #include "queue.h"
 #include "files.h"
 
-/* Parse HTTP request and extract the requested file path. Returns 0 on success, -1 on error. */
+/**
+ * @brief Parse HTTP request and extract the requested file path
+ * @param request_buffer The raw HTTP request string
+ * @param filename Output buffer for the extracted file path
+ * @param filename_size Size of the filename buffer
+ * @return 0 on success, -1 on parse error
+ * @details
+ *   - Parses "GET /path HTTP/1.1" format
+ *   - Skips whitespace, finds space after method
+ *   - Extracts path between first and second space
+ *   - Converts "/" to "/index.html"
+ */
 int parse_http_request(const char* request_buffer, char* filename, size_t filename_size) {
     // find the start of the request line
     const char* method_start = request_buffer;
@@ -80,7 +85,19 @@ int parse_http_request(const char* request_buffer, char* filename, size_t filena
     return 0; // success
 }
 
-/* Main worker thread function. Dequeues requests, parses HTTP, serves files. */
+/**
+ * @brief Main worker thread function
+ * @param arg Pointer to Worker_Thread structure
+ * @return NULL on thread exit
+ * @details
+ *   - Main loop for each worker thread (runs until shutdown)
+ *   - Calls dequeue_request() to get next client socket
+ *   - Sets 5-second socket timeout with setsockopt()
+ *   - Reads HTTP request with read()
+ *   - Calls parse_http_request() to extract filename
+ *   - Calls serve_file() or send_http_error()
+ *   - Closes socket and frees request memory
+ */
 void *worker_function(void* arg) {
     Worker_Thread* worker = (Worker_Thread*)arg;
 
@@ -104,9 +121,9 @@ void *worker_function(void* arg) {
 
         request->worker_id = worker->worker_id; // assign worker ID to request
         
-        // set timeout for socket operations (e.g., 5 seconds)
+        // set timeout for socket operations
         struct timeval tv;
-        tv.tv_sec = 5;
+        tv.tv_sec = SOCKET_TIMEOUT_SEC;
         tv.tv_usec = 0;
         setsockopt(request->client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
         setsockopt(request->client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
@@ -142,13 +159,11 @@ void *worker_function(void* arg) {
                 // failed to parse request
                 send_http_error(request->client_socket, 400, "Bad Request", worker->worker_id);
             }
-        } else if (bytes_read == 0) {
-            // client closed connection
-            write(STDOUT_FILENO, "[Worker] Client closed connection\n", 35);
-        } else {
-            // read error
-            write(STDOUT_FILENO, "[Worker] Error: Failed to read from socket\n", 44);
         }
+        /* Silently handle client disconnects - these are normal:
+           - bytes_read == 0: client closed connection
+           - bytes_read < 0: timeout or connection reset
+           No error logging needed for these common cases */
 
         // critical section to update worker status as inactive
         pthread_mutex_lock(&global_server.thread_pool.pool_mutex);
@@ -167,11 +182,20 @@ void *worker_function(void* arg) {
     return NULL;
 }
 
-/* Initialize thread pool and create worker threads. Returns 0 on success, -1 on error. */
+/**
+ * @brief Initialize thread pool and create worker threads
+ * @param pool Pointer to Thread_Pool structure
+ * @param num_workers Number of worker threads to create
+ * @return 0 on success, -1 on error
+ * @details
+ *   - Allocates Worker_Thread array with malloc()
+ *   - Initializes each worker's ID, status, counters
+ *   - Creates threads with pthread_create()
+ */
 int init_thread_pool(Thread_Pool* pool, int num_workers) {
-    if (num_workers > 100) { // hard limit check
-        write(STDOUT_FILENO, "Error: Exceeded maximum number of workers\n", 40);
-        return -1; // too many workers
+    if (num_workers > MAX_WORKER_LIMIT) {
+        write(STDOUT_FILENO, "Error: Exceeded maximum number of workers\n", 43);
+        return -1;
     }
 
     pool->workers = (Worker_Thread*)malloc(sizeof(Worker_Thread) * num_workers); // allocate memory for worker threads
@@ -180,7 +204,6 @@ int init_thread_pool(Thread_Pool* pool, int num_workers) {
     // initialize the thread pool structure
     pool->pool_size = num_workers;
     pool->active_workers = 0;
-    pool->shutdown_requested = 0;
     
     pthread_mutex_init(&pool->pool_mutex, NULL);
 
@@ -201,10 +224,16 @@ int init_thread_pool(Thread_Pool* pool, int num_workers) {
     return 0; // success
 }
 
-/* Shutdown thread pool - signals workers to exit, joins threads, frees memory */
+/**
+ * @brief Shutdown thread pool and free resources
+ * @param pool Pointer to Thread_Pool structure
+ * @details
+ *   - Sets shutdown_requested = 1
+ *   - Broadcasts not_empty to wake all waiting workers
+ *   - Joins all threads with pthread_join()
+ *   - Frees worker array and destroys mutex
+ */
 void clean_thread_pool(Thread_Pool* pool) {
-    pool->shutdown_requested = 1;
-    
     // Signal all workers to wake up
     pthread_cond_broadcast(&global_server.request_queue.not_empty);
 

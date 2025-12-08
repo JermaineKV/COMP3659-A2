@@ -1,12 +1,13 @@
-/*
- * queue.c - Thread-safe request queue implementation
+/**
+ * @file queue.c
+ * @brief Thread-safe request queue implementation
  *
  * Implements a bounded buffer queue for the producer-consumer pattern.
  * The main thread (producer) enqueues client connections, and worker
  * threads (consumers) dequeue and process them.
  *
  * Synchronization:
- *   - mutex: Protects queue operations
+ *   - mutex: Protects all queue operations
  *   - not_empty: Signals workers when queue has items
  *   - not_full: Signals producer when queue has space
  */
@@ -19,7 +20,15 @@
 #include "queue.h"
 #include "globals.h"
 
-/* Initialize the request queue with mutex and condition variables */
+/**
+ * @brief Initialize the request queue
+ * @param q Pointer to Shared_Queue structure
+ * @param max_size Maximum number of requests in queue
+ * @details
+ *   - Sets head/tail to NULL, queue_count to 0
+ *   - Stores max_size for bounded buffer limit
+ *   - Initializes mutex and both condition variables
+ */
 void queue_init(Shared_Queue *q, int max_size) {
     if (q == NULL) return;
     
@@ -33,7 +42,17 @@ void queue_init(Shared_Queue *q, int max_size) {
     pthread_cond_init(&q->not_full, NULL);
 }
 
-/* Add a client socket to the queue. Blocks if queue is full. */
+/**
+ * @brief Add a client socket to the queue (producer operation)
+ * @param q Pointer to Shared_Queue structure
+ * @param client_socket The client socket file descriptor
+ * @details
+ *   - Allocates new Client_Request with malloc()
+ *   - Locks mutex, waits on not_full if queue is full
+ *   - Adds request to tail of linked list
+ *   - Increments queue_count, signals not_empty
+ *   - Checks shutdown flag to avoid blocking forever
+ */
 void enqueue_request(Shared_Queue *q, int client_socket) {
     if (q == NULL) return;
     
@@ -46,7 +65,7 @@ void enqueue_request(Shared_Queue *q, int client_socket) {
     // create new request object
     Client_Request *request = (Client_Request*)malloc(sizeof(Client_Request));
     if (request == NULL) {
-        perror("Failed to allocate memory for request");
+        write(STDOUT_FILENO, "Error: Failed to allocate memory for request\n", 45);
         close(client_socket);
         return;
     }
@@ -86,7 +105,16 @@ void enqueue_request(Shared_Queue *q, int client_socket) {
     pthread_mutex_unlock(&q->mutex);
 }
 
-/* Remove and return next request from queue. Blocks if empty. Returns NULL on shutdown. */
+/**
+ * @brief Remove and return next request from queue (consumer operation)
+ * @param q Pointer to Shared_Queue structure
+ * @return Pointer to Client_Request, or NULL on shutdown
+ * @details
+ *   - Locks mutex, waits on not_empty if queue is empty
+ *   - Removes request from head of linked list
+ *   - Decrements queue_count, signals not_full
+ *   - Returns NULL if shutdown requested while waiting
+ */
 Client_Request* dequeue_request(Shared_Queue *q) {
     if (q == NULL) return NULL; // invalid queue pointer
     
@@ -96,16 +124,14 @@ Client_Request* dequeue_request(Shared_Queue *q) {
     // wait while queue is empty
     while (q->queue_count == 0) {
         // check for shutdown condition before and after wait
-        if (global_server.config.shutdown_requested || 
-            global_server.thread_pool.shutdown_requested) {
+        if (global_server.config.shutdown_requested) {
             pthread_mutex_unlock(&q->mutex);
             return NULL;
         }
         pthread_cond_wait(&q->not_empty, &q->mutex);
         
         // Re-check shutdown after waking up
-        if (global_server.config.shutdown_requested || 
-            global_server.thread_pool.shutdown_requested) {
+        if (global_server.config.shutdown_requested) {
             pthread_mutex_unlock(&q->mutex);
             return NULL;
         }

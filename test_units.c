@@ -1,14 +1,11 @@
-/* ============================================================================
+/*
  * COMP3659 Assignment 2 - Unit Tests for Web Server Components
- * ============================================================================
  * 
  * This file contains unit tests for individual functions in the web server.
  * Tests are run standalone (not as part of running server).
  *
  * Compile: gcc -Wall -Wextra -pthread -g -o test_units test_units.c queue.c globals.c -DTEST_MODE
  * Run:     ./test_units
- *
- * ============================================================================
  */
 
 #include <stdio.h>
@@ -21,9 +18,7 @@
 #include "globals.h"
 #include "queue.h"
 
-// ============================================================================
-// TEST COUNTERS
-// ============================================================================
+/* Test Counters */
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -39,10 +34,8 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-// ============================================================================
-// TEST: parse_http_request function
-// ============================================================================
-// Forward declaration (from worker.c)
+/* TEST: parse_http_request function */
+/* Forward declaration (from worker.c) */
 int parse_http_request(const char* request_buffer, char* filename, size_t filename_size);
 
 void test_parse_http_request() {
@@ -97,9 +90,7 @@ void test_parse_http_request() {
     TEST_ASSERT(strcmp(filename, "/spaced.html") == 0, "Multiple spaces handled");
 }
 
-// ============================================================================
-// TEST: Queue Operations
-// ============================================================================
+/* TEST: Queue Operations */
 
 void test_queue_init() {
     printf("\n=== Testing queue_init() ===\n");
@@ -164,10 +155,8 @@ void test_enqueue_dequeue() {
     cleanup_server_globals();
 }
 
-// ============================================================================
-// TEST: MIME Type Detection
-// ============================================================================
-// Forward declaration (from globals.c)
+/* TEST: MIME Type Detection */
+/* Forward declaration (from globals.c) */
 const char* get_mime_type(const char* filename);
 
 void test_mime_types() {
@@ -215,9 +204,7 @@ void test_mime_types() {
     TEST_ASSERT(mime != NULL, "Unknown extension returns non-NULL (default type)");
 }
 
-// ============================================================================
-// TEST: Thread Safety (Basic)
-// ============================================================================
+/* TEST: Thread Safety (Basic) */
 
 #define NUM_PRODUCER_THREADS 5
 #define NUM_REQUESTS_PER_THREAD 20
@@ -314,9 +301,7 @@ void test_thread_safety() {
     cleanup_server_globals();
 }
 
-// ============================================================================
-// TEST: Server Configuration
-// ============================================================================
+/* TEST: Server Configuration */
 
 void test_server_config() {
     printf("\n=== Testing Server Configuration ===\n");
@@ -336,14 +321,11 @@ void test_server_config() {
     cleanup_server_globals();
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
+/* Main */
 
 int main() {
-    printf("============================================================\n");
     printf("COMP3659 Web Server - Unit Test Suite\n");
-    printf("============================================================\n");
+    printf("-----------------------------------\n");
     
     // Run all tests
     test_parse_http_request();
@@ -353,14 +335,13 @@ int main() {
     test_server_config();
     test_thread_safety();
     
-    // Print summary
-    printf("\n============================================================\n");
-    printf("TEST SUMMARY\n");
-    printf("============================================================\n");
+    /* Print summary */
+    printf("\nTEST SUMMARY\n");
+    printf("-----------------------------------\n");
     printf("Tests Run:    %d\n", tests_run);
     printf("Tests Passed: %d\n", tests_passed);
     printf("Tests Failed: %d\n", tests_failed);
-    printf("============================================================\n");
+    printf("-----------------------------------\n");
     
     if (tests_failed == 0) {
         printf("ALL TESTS PASSED!\n");

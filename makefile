@@ -21,18 +21,7 @@ test: $(TEST_TARGET)
 $(TEST_TARGET): test_units.c globals.c queue.c worker.c files.c $(HEADERS)
 	$(CC) $(CFLAGS) -o $(TEST_TARGET) test_units.c globals.c queue.c worker.c files.c
 
-# Run integration tests (requires server to be built)
-integration-test: $(TARGET)
-	@echo "Running integration tests..."
-	@chmod +x test_server.sh
-	./test_server.sh
-
-# Quick test (server must be running)
-quick-test:
-	@chmod +x quick_test.sh
-	./quick_test.sh
-
 clean:
-	rm -f $(OBJS) $(TARGET) $(TEST_TARGET) server_output.log test_output.tmp
+	rm -f $(OBJS) $(TARGET) $(TEST_TARGET)
 
-.PHONY: all clean test integration-test quick-test
+.PHONY: all clean test

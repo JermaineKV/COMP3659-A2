@@ -1,15 +1,9 @@
-/*
- * myserver.c - Main entry point for multithreaded web server
+/**
+ * @file myserver.c
+ * @brief Main entry point for multithreaded web server
  *
  * This is the main server program that initializes all components and runs
  * the accept loop. The server uses a thread pool to handle HTTP requests.
- *
- * Server startup sequence:
- *   1. Initialize global state and mutexes
- *   2. Create listening socket and bind to port
- *   3. Start worker thread pool
- *   4. Accept connections and enqueue to worker threads
- *   5. On SIGINT/SIGTERM: graceful shutdown
  *
  * Usage: ./myserver [port]   (default port: 8080)
  */
@@ -30,10 +24,15 @@
 // Global flag for server running state
 volatile sig_atomic_t server_running = 1;
 
-/* Signal handler for graceful shutdown (SIGINT/SIGTERM) */
+/**
+ * @brief Signal handler for SIGINT and SIGTERM
+ * @param sig The signal number received
+ * @details Sets server_running = 0 and shutdown_requested = 1.
+ *          Closes server socket to unblock accept().
+ */
 void handle_signal(int sig) {
     if (sig == SIGINT || sig == SIGTERM) {
-        printf("\nShutting down server...\n");
+        write(STDOUT_FILENO, "\nShutting down server...\n", 26);
         server_running = 0;
         global_server.config.shutdown_requested = 1; // set global shutdown flag
         
@@ -45,13 +44,24 @@ void handle_signal(int sig) {
     }
 }
 
-/* Main entry point - sets up socket, thread pool, and runs accept loop */
+/**
+ * @brief Main entry point - sets up socket, thread pool, and runs accept loop
+ * @param argc Argument count
+ * @param argv Argument vector (optional port number)
+ * @return 0 on successful shutdown
+ * @details
+ *   - Calls initialize_server_globals() to set defaults
+ *   - Parses optional port argument from argv[1]
+ *   - Installs signal handlers (SIGINT, SIGTERM, ignores SIGPIPE)
+ *   - Creates TCP socket, sets SO_REUSEADDR, binds to port
+ *   - Calls listen() with backlog of 128
+ *   - Calls init_thread_pool() to create 10 worker threads
+ *   - Runs accept loop: accept() -> enqueue_request()
+ *   - On shutdown: clean_thread_pool(), cleanup_server_globals()
+ */
 int main(int argc, char *argv[]) {
     // initialize globals with defaults
     initialize_server_globals();
-    
-    // initialize the queue mutexes and cond vars
-    queue_init(&global_server.request_queue, DEFAULT_QUEUE_SIZE);
     
     // allow port to be passed as argument
     if (argc > 1) {
@@ -74,14 +84,14 @@ int main(int argc, char *argv[]) {
     // create server socket
     global_server.config.server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (global_server.config.server_socket == -1) {
-        perror("Failed to create socket");
+        write(STDOUT_FILENO, "Error: Failed to create socket\n", 32);
         exit(EXIT_FAILURE);
     }
 
     // set socket options to reuse address
     int opt = 1;
     if (setsockopt(global_server.config.server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt failed");
+        write(STDOUT_FILENO, "Error: setsockopt failed\n", 25);
         exit(EXIT_FAILURE);
     }
 
@@ -92,18 +102,20 @@ int main(int argc, char *argv[]) {
     address.sin_port = htons(port);
 
     if (bind(global_server.config.server_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
+        write(STDOUT_FILENO, "Error: Bind failed\n", 19);
         exit(EXIT_FAILURE);
     }
 
     // listen on socket (increased backlog for concurrent connections)
-    if (listen(global_server.config.server_socket, 128) < 0) {
-        perror("Listen failed");
+    if (listen(global_server.config.server_socket, LISTEN_BACKLOG) < 0) {
+        write(STDOUT_FILENO, "Error: Listen failed\n", 21);
         exit(EXIT_FAILURE);
     }
 
-    printf("Server listening on port %d\n", port);
-    printf("Press Ctrl+C to stop.\n");
+    char msg[64];
+    int msg_len = snprintf(msg, sizeof(msg), "Server listening on port %d\n", port);
+    write(STDOUT_FILENO, msg, msg_len);
+    write(STDOUT_FILENO, "Press Ctrl+C to stop.\n", 22);
 
     // initialize thread pool
     init_thread_pool(&global_server.thread_pool, global_server.config.thread_pool_size);
@@ -121,7 +133,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (client_socket < 0) {
-            perror("Accept failed");
+            write(STDOUT_FILENO, "Error: Accept failed\n", 21);
             continue;
         }
 
@@ -130,10 +142,10 @@ int main(int argc, char *argv[]) {
     }
 
     // cleanup
-    printf("Cleaning up resources...\n");
+    write(STDOUT_FILENO, "Cleaning up resources...\n", 25);
     clean_thread_pool(&global_server.thread_pool);
     cleanup_server_globals();
     
-    printf("Server shutdown complete.\n");
+    write(STDOUT_FILENO, "Server shutdown complete.\n", 26);
     return 0;
 }

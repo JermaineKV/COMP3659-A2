@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multithreaded Web Server Demo</title>
+    <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🖥️ Multithreaded Web Server</h1>
+            <p class="subtitle">COMP 3659 - Operating Systems Assignment 2</p>
+        </header>
+
+        <section class="status-panel">
+            <h2>Server Status</h2>
+            <div class="status-grid">
+                <div class="status-card" id="connection-status">
+                    <span class="status-icon">⏳</span>
+                    <span class="status-label">Connection</span>
+                    <span class="status-value" id="conn-value">Testing...</span>
+                </div>
+                <div class="status-card" id="latency-status">
+                    <span class="status-icon">⚡</span>
+                    <span class="status-label">Latency</span>
+                    <span class="status-value" id="latency-value">--</span>
+                </div>
+                <div class="status-card" id="requests-status">
+                    <span class="status-icon">📊</span>
+                    <span class="status-label">Requests</span>
+                    <span class="status-value" id="requests-value">0</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="test-panel">
+            <h2>Interactive Tests</h2>
+            
+            <div class="test-group">
+                <h3>📁 File Serving Tests</h3>
+                <div class="button-row">
+                    <button onclick="testFile('demo.html', 'text/html')">Test HTML</button>
+                    <button onclick="testFile('demo.css', 'text/css')">Test CSS</button>
+                    <button onclick="testFile('demo.js', 'application/javascript')">Test JS</button>
+                    <button onclick="testFile('test.json', 'application/json')">Test JSON</button>
+                    <button onclick="testFile('readme.txt', 'text/plain')">Test TXT</button>
+                </div>
+            </div>
+
+            <div class="test-group">
+                <h3>❌ Error Handling Tests</h3>
+                <div class="button-row">
+                    <button onclick="test404()">Test 404 Error</button>
+                    <button onclick="testDeepPath()">Test Deep Path 404</button>
+                </div>
+            </div>
+
+            <div class="test-group">
+                <h3>🚀 Concurrency Tests</h3>
+                <div class="button-row">
+                    <button onclick="testConcurrent(5)">5 Concurrent</button>
+                    <button onclick="testConcurrent(10)">10 Concurrent</button>
+                    <button onclick="testConcurrent(20)">20 Concurrent</button>
+                    <button onclick="testSequential(10)">10 Sequential</button>
+                </div>
+            </div>
+
+            <div class="test-group">
+                <h3>⏱️ Performance Tests</h3>
+                <div class="button-row">
+                    <button onclick="testLatency(5)">Measure Latency (5x)</button>
+                    <button onclick="stressTest()">Stress Test (50 req)</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="results-panel">
+            <h2>Test Results</h2>
+            <div class="results-controls">
+                <button onclick="clearResults()" class="secondary">Clear Results</button>
+            </div>
+            <div id="results-log" class="results-log">
+                <div class="log-entry info">Ready to run tests...</div>
+            </div>
+        </section>
+
+        <section class="info-panel">
+            <h2>Server Features</h2>
+            <div class="features-grid">
+                <div class="feature">
+                    <span class="feature-icon">🧵</span>
+                    <h4>Thread Pool</h4>
+                    <p>10 worker threads handle requests concurrently</p>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">🔒</span>
+                    <h4>Thread Safety</h4>
+                    <p>Mutex & condition variables protect shared queue</p>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">📦</span>
+                    <h4>MIME Types</h4>
+                    <p>Supports HTML, CSS, JS, JSON, images, and more</p>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">🛡️</span>
+                    <h4>Error Handling</h4>
+                    <p>Graceful 404 and 500 error responses</p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>Powered by custom C multithreaded server with pthreads</p>
+        </footer>
+    </div>
+
+    <script src="demo.js"></script>
+</body>
+</html>
